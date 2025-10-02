@@ -17,6 +17,11 @@ services:
       - namenode
     networks:
       - denet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build:
@@ -28,6 +33,15 @@ services:
     stdin_open: true
     networks:
       - denet
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - CHOKIDAR_USEPOLLING=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   clickhouse:
     image: clickhouse/clickhouse-server:latest

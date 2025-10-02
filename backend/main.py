@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import json
 
-from .database import SessionLocal, engine
-from .models import Base, Pipeline
-from .utils import (
+from database import SessionLocal, engine
+from models import Base, Pipeline
+from utils import (
     analyze_structure,
     generate_recommendations,
     generate_etl_pipeline,
@@ -273,7 +273,7 @@ async def upload_to_hdfs(payload: HdfsPayload):
         return JSONResponse(status_code=404, content={"error": "Пайплайн не найден"})
     # делегируем в util функцию загрузки файла в HDFS
     try:
-        from .utils import upload_file_to_hdfs
+        from utils import upload_file_to_hdfs
         ok = upload_file_to_hdfs(local_path=pipeline.source_path, hdfs_path=payload.hdfs_path)
         return {"status": "success" if ok else "failed"}
     except Exception as e:

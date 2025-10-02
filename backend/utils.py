@@ -1,16 +1,37 @@
 import json
 import os
+from typing import Optional, Dict, Any
 
-_LLM_AVAILABLE = False
-_pipeline = None
+# Optional third-party clients (imported at top per guideline)
 try:
-    # Попытка инициализации локального пайплайна суммаризации/генерации
-from transformers import pipeline  # type: ignore
-    model_id = os.environ.get("LLM_MODEL_ID", "Qwen/Qwen2.5-1.5B-Instruct")
-    _pipeline = pipeline("text-generation", model=model_id, device_map="auto")
-    _LLM_AVAILABLE = True
+    from sqlalchemy import create_engine  # type: ignore
 except Exception:
-    _LLM_AVAILABLE = False
+    create_engine = None  # type: ignore
+
+try:
+    from clickhouse_connect import get_client  # type: ignore
+except Exception:
+    get_client = None  # type: ignore
+
+try:
+    from hdfs import InsecureClient  # type: ignore
+except Exception:
+    InsecureClient = None  # type: ignore
+
+# LLM setup (Auto classes)
+_LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "Qwen/Qwen2.5-1.5B-Instruct")
+_LLM_ENABLED = os.environ.get("LLM_ENABLED", "0") == "1"
+_llm_model = None
+_llm_tokenizer = None
+try:
+    from transformers import AutoTokenizer, AutoModelForCausalLM  # type: ignore
+    import torch  # type: ignore
+    if _LLM_ENABLED:
+        _llm_tokenizer = AutoTokenizer.from_pretrained(_LLM_MODEL_ID)
+        _llm_model = AutoModelForCausalLM.from_pretrained(_LLM_MODEL_ID)
+except Exception:
+    _llm_model = None
+    _llm_tokenizer = None
 
 def _read_prompt(path: str, **kwargs) -> str:
     try:
@@ -21,13 +42,16 @@ def _read_prompt(path: str, **kwargs) -> str:
         return ""
 
 
-def _llm_generate_json(prompt: str) -> dict:
-    if not (_LLM_AVAILABLE and _pipeline):
+def _llm_generate_json(prompt: str) -> Dict[str, Any]:
+    if not (_llm_model and _llm_tokenizer):
         return {}
     try:
-        out = _pipeline(prompt, max_new_tokens=512, do_sample=False)
-        text = out[0]["generated_text"] if isinstance(out, list) else str(out)
-        # попытка извлечь JSON из ответа
+        inputs = _llm_tokenizer(prompt, return_tensors="pt")
+        with torch.no_grad():
+            outputs = _llm_model.generate(
+                **inputs, max_new_tokens=512, do_sample=False
+            )
+        text = _llm_tokenizer.decode(outputs[0], skip_special_tokens=True)
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
@@ -155,7 +179,8 @@ def load_to_target_db(etl_code, target_db):
 
 
 def upload_file_to_hdfs(local_path: str, hdfs_path: str) -> bool:
-    from hdfs import InsecureClient
+    if InsecureClient is None:
+        raise RuntimeError("hdfs client is not installed")
     hdfs_host = os.environ.get("HDFS_WEBHDFS", "http://namenode:9870")
     client = InsecureClient(hdfs_host, user=os.environ.get("HDFS_USER", "root"))
     if not os.path.exists(local_path):
@@ -165,21 +190,25 @@ def upload_file_to_hdfs(local_path: str, hdfs_path: str) -> bool:
     return True
 
 
-def load_dataframe_to_postgres(df, table_name: str, conn_str: str) -> None:
-    from sqlalchemy import create_engine
+def upload_to_postgres(df, table_name: str, conn_str: str) -> None:
+    if create_engine is None:
+        raise RuntimeError("sqlalchemy not installed")
     engine = create_engine(conn_str)
     df.to_sql(table_name, engine, if_exists='append', index=False)
 
 
-def load_dataframe_to_clickhouse(df, table_name: str, host: str = None, port: int = None, database: str = None):
-    from clickhouse_connect import get_client
+def upload_to_clickhouse(df, table_name: str, host: Optional[str] = None, port: Optional[int] = None, database: Optional[str] = None):
+    if get_client is None:
+        raise RuntimeError("clickhouse-connect not installed")
     host = host or os.environ.get("CLICKHOUSE_HOST", "clickhouse")
     port = int(port or os.environ.get("CLICKHOUSE_PORT", 8123))
     database = database or os.environ.get("CLICKHOUSE_DB", "default")
     client = get_client(host=host, port=port, database=database)
     cols = ", ".join([f"`{c}` String" for c in df.columns])
     client.command(f"CREATE TABLE IF NOT EXISTS {table_name} ({cols}) ENGINE = MergeTree ORDER BY tuple()")
-    # вставка
     client.insert(table_name, df.values.tolist(), column_names=list(df.columns))
+
+def upload_to_hdfs(local_path: str, hdfs_path: str) -> bool:
+    return upload_file_to_hdfs(local_path, hdfs_path)
 
 
