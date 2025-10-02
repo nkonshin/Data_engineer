@@ -8,5 +8,8 @@ clickhouse-connect
 requests
 transformers
 python-multipart
+psycopg2-binary
+hdfs
+
 
 

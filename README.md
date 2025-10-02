@@ -18,13 +18,22 @@
 
 ## Локальный запуск
 
-1. Установите зависимости:
+1. Создайте виртуальное окружение (Windows PowerShell):
+
+```
+cd C:\DataAI\data_engineer
+python -m venv .venv
+. .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+2. Установите зависимости:
 
 ```
 pip install -r backend/requirements.txt
 ```
 
-2. Запустите бэкенд:
+3. Запустите бэкенд:
 
 ```
 python run.py
@@ -62,6 +71,12 @@ docker-compose up --build -d
 - FastAPI (API): `http://localhost:8000`
 - Airflow: `http://localhost:8080`
 - HDFS NameNode UI: `http://localhost:9870`
+
+Если PowerShell блокирует активацию venv:
+
+```
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 
 ## Использование
 
