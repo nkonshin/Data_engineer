@@ -1,0 +1,24 @@
+.App {
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+.upload-form, .pipeline-list {
+  margin-bottom: 40px;
+}
+
+.upload-form input, .upload-form button {
+  margin: 5px 0;
+}
+
+.pipeline-item {
+  border: 1px solid #ccc;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.pipeline-item button {
+  margin-right: 10px;
+}
+
+

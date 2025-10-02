@@ -1,0 +1,98 @@
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: data_engineer_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./prompts:/app/prompts
+      - ./data:/app/data
+    depends_on:
+      - clickhouse
+      - postgres
+      - namenode
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: data_engineer_frontend
+    ports:
+      - "3000:3000"
+    stdin_open: true
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: data_engineer
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: data_engineer_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Single-node Hadoop HDFS (NameNode + DataNode)
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs-namenode
+    environment:
+      - CLUSTER_NAME=local-hadoop
+    ports:
+      - "9870:9870"  # NameNode web UI
+    volumes:
+      - hdfs_namenode:/hadoop/dfs/name
+    env_file:
+      - ./hadoop/hadoop.env
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs-datanode
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    ports:
+      - "9864:9864"  # DataNode web UI
+    volumes:
+      - hdfs_datanode:/hadoop/dfs/data
+    env_file:
+      - ./hadoop/hadoop.env
+    depends_on:
+      - namenode
+
+  airflow:
+    image: apache/airflow:2.5.1
+    container_name: airflow
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS=False
+    volumes:
+      - ./backend/airflow_dags:/opt/airflow/dags
+    ports:
+      - "8080:8080"
+    command: >
+      bash -c "airflow db init &&
+               airflow scheduler &
+               airflow webserver"
+
+volumes:
+  clickhouse_data:
+  postgres_data:
+  hdfs_namenode:
+  hdfs_datanode:
+
+

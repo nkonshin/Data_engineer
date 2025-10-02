@@ -1,0 +1,12 @@
+<root>
+  <record>
+    <category>Books</category>
+    <count>100</count>
+  </record>
+  <record>
+    <category>Electronics</category>
+    <count>50</count>
+  </record>
+</root>
+
+
