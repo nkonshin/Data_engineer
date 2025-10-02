@@ -37,6 +37,10 @@ app.add_middleware(
 class PipelineId(BaseModel):
     pipeline_id: int
 
+@app.get("/")
+async def root():
+    return {"status": "API работает"}
+
 
 @app.post("/upload-file/")
 async def upload_file(file: UploadFile = File(...)):
@@ -66,8 +70,11 @@ async def upload_file(file: UploadFile = File(...)):
     sample_data = df_nonzero.to_dict(orient='records')
 
     recs = analyze_structure(sample_data)
-    ddl_script = generate_ddl(sample_data)
-    pipeline_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"))
+    # Если LLM вернула готовые поля
+    ddl_script = recs.get("ddl") if isinstance(recs, dict) else None
+    ddl_script = ddl_script or generate_ddl(sample_data)
+    pipeline_code = recs.get("etl") if isinstance(recs, dict) else None
+    pipeline_code = pipeline_code or generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"))
 
     db: Session = SessionLocal()
     pipeline = Pipeline(
@@ -76,8 +83,22 @@ async def upload_file(file: UploadFile = File(...)):
         recommendations=json.dumps(recs, ensure_ascii=False),
         ddl_script=ddl_script,
         etl_code=pipeline_code,
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
+        hypothesis=None,
+        source_path=file_path
     )
+    db.add(pipeline)
+    db.commit()
+    db.refresh(pipeline)
+    # Сохраняем DAG с уникальным id и обновляем запись
+    dag_id = f"etl_pipeline_{pipeline.id}"
+    dag_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"), dag_id=dag_id)
+    dags_dir = os.path.join(os.path.dirname(__file__), 'airflow_dags')
+    os.makedirs(dags_dir, exist_ok=True)
+    dag_path = os.path.join(dags_dir, f"{dag_id}.py")
+    with open(dag_path, 'w', encoding='utf-8') as f:
+        f.write(dag_code)
+    pipeline.etl_code = dag_code
     db.add(pipeline)
     db.commit()
     db.refresh(pipeline)
@@ -119,8 +140,10 @@ async def connect_db(
     sample_data = df_nonzero.to_dict(orient='records')
 
     recs = analyze_structure(sample_data)
-    ddl_script = generate_ddl(sample_data)
-    pipeline_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"))
+    ddl_script = recs.get("ddl") if isinstance(recs, dict) else None
+    ddl_script = ddl_script or generate_ddl(sample_data)
+    pipeline_code = recs.get("etl") if isinstance(recs, dict) else None
+    pipeline_code = pipeline_code or generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"))
 
     db: Session = SessionLocal()
     pipeline = Pipeline(
@@ -129,8 +152,22 @@ async def connect_db(
         recommendations=json.dumps(recs, ensure_ascii=False),
         ddl_script=ddl_script,
         etl_code=pipeline_code,
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
+        hypothesis=None,
+        source_path=f"{source_db}://{host}:{port}/{dbname}"
     )
+    db.add(pipeline)
+    db.commit()
+    db.refresh(pipeline)
+    # Сохранение DAG
+    dag_id = f"etl_pipeline_{pipeline.id}"
+    dag_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"), dag_id=dag_id)
+    dags_dir = os.path.join(os.path.dirname(__file__), 'airflow_dags')
+    os.makedirs(dags_dir, exist_ok=True)
+    dag_path = os.path.join(dags_dir, f"{dag_id}.py")
+    with open(dag_path, 'w', encoding='utf-8') as f:
+        f.write(dag_code)
+    pipeline.etl_code = dag_code
     db.add(pipeline)
     db.commit()
     db.refresh(pipeline)
@@ -212,6 +249,34 @@ async def generate_report(body: PipelineId):
         return JSONResponse(status_code=404, content={"error": "Пайплайн не найден"})
     recs = json.loads(pipeline.recommendations) if pipeline.recommendations else {}
     report = generate_hypothesis(recs)
+    # сохраняем гипотезу
+    db: Session = SessionLocal()
+    p = db.query(Pipeline).filter(Pipeline.id == body.pipeline_id).first()
+    if p:
+        p.hypothesis = report
+        db.add(p)
+        db.commit()
+    db.close()
     return {"hypothesis": report}
+
+
+class HdfsPayload(BaseModel):
+    pipeline_id: int
+    hdfs_path: str
+
+@app.post("/upload-to-hdfs/")
+async def upload_to_hdfs(payload: HdfsPayload):
+    db: Session = SessionLocal()
+    pipeline = db.query(Pipeline).filter(Pipeline.id == payload.pipeline_id).first()
+    db.close()
+    if not pipeline:
+        return JSONResponse(status_code=404, content={"error": "Пайплайн не найден"})
+    # делегируем в util функцию загрузки файла в HDFS
+    try:
+        from .utils import upload_file_to_hdfs
+        ok = upload_file_to_hdfs(local_path=pipeline.source_path, hdfs_path=payload.hdfs_path)
+        return {"status": "success" if ok else "failed"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 

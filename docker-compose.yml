@@ -15,6 +15,8 @@ services:
       - clickhouse
       - postgres
       - namenode
+    networks:
+      - denet
 
   frontend:
     build:
@@ -24,6 +26,8 @@ services:
     ports:
       - "3000:3000"
     stdin_open: true
+    networks:
+      - denet
 
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -33,6 +37,8 @@ services:
       - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - denet
 
   postgres:
     image: postgres:13
@@ -46,6 +52,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - denet
 
   # Single-node Hadoop HDFS (NameNode + DataNode)
   namenode:
@@ -59,6 +67,8 @@ services:
       - hdfs_namenode:/hadoop/dfs/name
     env_file:
       - ./hadoop/hadoop.env
+    networks:
+      - denet
 
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
@@ -73,6 +83,8 @@ services:
       - ./hadoop/hadoop.env
     depends_on:
       - namenode
+    networks:
+      - denet
 
   airflow:
     image: apache/airflow:2.5.1
@@ -88,11 +100,16 @@ services:
       bash -c "airflow db init &&
                airflow scheduler &
                airflow webserver"
+    networks:
+      - denet
 
 volumes:
   clickhouse_data:
   postgres_data:
   hdfs_namenode:
   hdfs_datanode:
+networks:
+  denet:
+    driver: bridge
 
 

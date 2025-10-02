@@ -1,5 +1,11 @@
 У тебя есть образец данных: {data}.
-Определи оптимальную целевую СУБД: PostgreSQL, ClickHouse или HDFS.
-Дай рекомендации по хранению данных (партиционирование, индексация, структура таблиц).
+Верни один JSON с ключами:
+{
+  "target_db": "postgres|clickhouse|hdfs",
+  "recommendations": "Текст",
+  "ddl": "DDL для таблиц",
+  "hypothesis": "Краткий отчёт",
+  "etl": "Код DAG Airflow"
+}
 
 

@@ -12,5 +12,7 @@ class Pipeline(Base):
     ddl_script = Column(Text)
     etl_code = Column(Text)
     created_at = Column(DateTime)
+    hypothesis = Column(Text)
+    source_path = Column(Text)
 
 

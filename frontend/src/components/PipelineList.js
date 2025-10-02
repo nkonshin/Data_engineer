@@ -30,6 +30,13 @@ function PipelineList() {
     alert('Гипотеза:\n' + res.data.hypothesis);
   };
 
+  const handleUploadToHdfs = async (id) => {
+    const hdfsPath = prompt('Укажите путь HDFS (например, /data/raw/sample.csv):', `/data/raw/pipeline_${id}.csv`);
+    if (!hdfsPath) return;
+    const res = await axios.post(`${backendUrl}/upload-to-hdfs/`, { pipeline_id: id, hdfs_path: hdfsPath });
+    alert(res.data.status === 'success' ? 'Загружено в HDFS' : 'Ошибка загрузки');
+  };
+
   useEffect(() => {
     fetchPipelines();
     const interval = setInterval(fetchPipelines, 5000);
@@ -44,6 +51,7 @@ function PipelineList() {
           <p><strong>ID:</strong> {p.id}, <strong>Название:</strong> {p.name}</p>
           <button onClick={() => handleLoad(p.id)}>Загрузить в БД</button>
           <button onClick={() => handleHypothesis(p.id)}>Сформировать гипотезу</button>
+          <button onClick={() => handleUploadToHdfs(p.id)}>Загрузить в HDFS</button>
           <button onClick={() => handleDelete(p.id)}>Удалить</button>
         </div>
       ))}

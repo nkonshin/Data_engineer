@@ -10,6 +10,8 @@ transformers
 python-multipart
 psycopg2-binary
 hdfs
+torch
+huggingface_hub
 
 
 
