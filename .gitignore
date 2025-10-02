@@ -1,0 +1,87 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+*.egg-info/
+.eggs/
+.python-version
+.venv/
+venv/
+ENV/
+env/
+dist/
+build/
+pip-wheel-metadata/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+.cache/
+pytestdebug.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Node / Frontend
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/.next/
+frontend/.parcel-cache/
+frontend/.pnp/
+frontend/.pnp.js
+frontend/.vite/
+frontend/coverage/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Airflow generated DAGs and caches
+backend/airflow_dags/__pycache__/
+backend/airflow_dags/*.pyc
+backend/airflow_dags/etl_pipeline_*.py
+
+# Project DB and caches
+backend/backend.db
+backend/**/__pycache__/
+backend/*.pyc
+
+# Data temp files (оставляем примеры, игнорим временные)
+data/*.tmp
+data/*.log
+data/*.lock
+
+# Others
+*.swp
+*.swo
+*.orig

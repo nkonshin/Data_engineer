@@ -37,6 +37,22 @@ function PipelineList() {
     alert(res.data.status === 'success' ? 'Загружено в HDFS' : 'Ошибка загрузки');
   };
 
+  const downloadDDL = (p) => {
+    if (!p?.ddl_script) {
+      alert('DDL отсутствует');
+      return;
+    }
+    const blob = new Blob([p.ddl_script], { type: 'text/sql;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${p.name || 'pipeline'}.sql`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     fetchPipelines();
     const interval = setInterval(fetchPipelines, 5000);
@@ -48,11 +64,20 @@ function PipelineList() {
       <h2>Список пайплайнов</h2>
       {pipelines.map(p => (
         <div key={p.id} className="pipeline-item">
-          <p><strong>ID:</strong> {p.id}, <strong>Название:</strong> {p.name}</p>
+          <p><strong>ID:</strong> {p.id} | <strong>Название:</strong> {p.name} | <strong>Target DB:</strong> {p.target_db}</p>
           <button onClick={() => handleLoad(p.id)}>Загрузить в БД</button>
           <button onClick={() => handleHypothesis(p.id)}>Сформировать гипотезу</button>
           <button onClick={() => handleUploadToHdfs(p.id)}>Загрузить в HDFS</button>
           <button onClick={() => handleDelete(p.id)}>Удалить</button>
+          <details style={{ marginTop: '8px' }}>
+            <summary>DDL</summary>
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{p.ddl_script || '—'}</pre>
+            <button onClick={() => downloadDDL(p)}>Скачать DDL</button>
+          </details>
+          <details style={{ marginTop: '8px' }}>
+            <summary>DAG (код)</summary>
+            <pre style={{ whiteSpace: 'pre-wrap' }}>{p.etl_code || '—'}</pre>
+          </details>
         </div>
       ))}
       {pipelines.length === 0 && <p>Пайплайнов ещё нет.</p>}

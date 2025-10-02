@@ -11,12 +11,25 @@ services:
       - ./backend:/app
       - ./prompts:/app/prompts
       - ./data:/app/data
+    environment:
+      - LLM_ENABLED=1
+      - OPENAI_BASE_URL=http://host.docker.internal:1234/v1
+      - OPENAI_MODEL=qwen3-coder-30b-a3b-instruct-mlx
+      - OPENAI_API_KEY=lm-studio
+      - PG_CONN_STR=postgresql://data_engineer:password@postgres:5432/data_engineer_db
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DB=default
+      - HDFS_WEBHDFS=http://namenode:9870
+      - HDFS_USER=root
     depends_on:
       - clickhouse
       - postgres
       - namenode
     networks:
       - denet
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 10s
@@ -73,6 +86,7 @@ services:
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: hdfs-namenode
+    platform: linux/amd64
     environment:
       - CLUSTER_NAME=local-hadoop
     ports:
@@ -87,6 +101,7 @@ services:
   datanode:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: hdfs-datanode
+    platform: linux/amd64
     environment:
       SERVICE_PRECONDITION: "namenode:9870"
     ports:
@@ -103,6 +118,7 @@ services:
   airflow:
     image: apache/airflow:2.5.1
     container_name: airflow
+    platform: linux/amd64
     environment:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__DATABASE__LOAD_DEFAULT_CONNECTIONS=False

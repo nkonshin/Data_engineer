@@ -6,12 +6,11 @@ databases[sqlite]
 pandas
 clickhouse-connect
 requests
-transformers
 python-multipart
 psycopg2-binary
 hdfs
-torch
-huggingface_hub
+lxml
+xmltodict
 
 
 

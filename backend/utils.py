@@ -1,6 +1,9 @@
 import json
 import os
 from typing import Optional, Dict, Any
+import requests
+import pandas as pd
+import re
 
 # Optional third-party clients (imported at top per guideline)
 try:
@@ -18,20 +21,46 @@ try:
 except Exception:
     InsecureClient = None  # type: ignore
 
-# LLM setup (Auto classes)
-_LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "Qwen/Qwen2.5-1.5B-Instruct")
+# LLM setup (OpenAI-compatible, e.g., LM Studio)
 _LLM_ENABLED = os.environ.get("LLM_ENABLED", "0") == "1"
-_llm_model = None
-_llm_tokenizer = None
-try:
-    from transformers import AutoTokenizer, AutoModelForCausalLM  # type: ignore
-    import torch  # type: ignore
-    if _LLM_ENABLED:
-        _llm_tokenizer = AutoTokenizer.from_pretrained(_LLM_MODEL_ID)
-        _llm_model = AutoModelForCausalLM.from_pretrained(_LLM_MODEL_ID)
-except Exception:
-    _llm_model = None
-    _llm_tokenizer = None
+_OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "http://host.docker.internal:1234/v1")
+_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "qwen3-coder-30b-a3b-instruct-mlx")
+_OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "lm-studio")
+
+def _llm_chat_json(system_text: str, user_text: str) -> Dict[str, Any]:
+    if not _LLM_ENABLED:
+        return {}
+    try:
+        url = f"{_OPENAI_BASE_URL.rstrip('/')}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_OPENAI_API_KEY}",
+        }
+        payload = {
+            "model": _OPENAI_MODEL,
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": user_text},
+            ],
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        # Строгая попытка распарсить JSON
+        try:
+            return json.loads(content)
+        except Exception:
+            # Фолбек: вырезать JSON из текста
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(content[start:end+1])
+            return {}
+    except Exception:
+        return {}
 
 def _read_prompt(path: str, **kwargs) -> str:
     try:
@@ -43,23 +72,11 @@ def _read_prompt(path: str, **kwargs) -> str:
 
 
 def _llm_generate_json(prompt: str) -> Dict[str, Any]:
-    if not (_llm_model and _llm_tokenizer):
-        return {}
-    try:
-        inputs = _llm_tokenizer(prompt, return_tensors="pt")
-        with torch.no_grad():
-            outputs = _llm_model.generate(
-                **inputs, max_new_tokens=512, do_sample=False
-            )
-        text = _llm_tokenizer.decode(outputs[0], skip_special_tokens=True)
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            payload = text[start:end+1]
-            return json.loads(payload)
-    except Exception:
-        return {}
-    return {}
+    # Backward-compat: вызывался ранее — перенаправим в чат-модель
+    system_text = (
+        "Ты ИИ-ассистент дата-инженера. Всегда отвечай строго валидным JSON без текста вокруг."
+    )
+    return _llm_chat_json(system_text, prompt)
 
 
 def analyze_structure(sample_data):
@@ -68,7 +85,11 @@ def analyze_structure(sample_data):
     Вызывает LLM с соответствующим промтом (эмуляция).
     """
     prompt = _read_prompt(os.path.join("prompts", "analyze_structure.txt"), data=json.dumps(sample_data, ensure_ascii=False))
-    llm = _llm_generate_json(prompt) if prompt else {}
+    system_text = (
+        "Ты ИИ-ассистент дата-инженера. Верни ТОЛЬКО один JSON. Ключи: "
+        "target_db|recommendations|ddl|hypothesis|etl."
+    )
+    llm = _llm_chat_json(system_text, prompt) if prompt else {}
     if llm:
         # ожидаемая структура: target_db, recommendations, ddl, hypothesis, etl
         return llm
@@ -89,14 +110,15 @@ def generate_recommendations(sample_data):
     return {}
 
 
-def generate_etl_pipeline(sample_data, target_db, dag_id: str = "etl_pipeline"):
+def generate_etl_pipeline(sample_data, target_db, dag_id: str = "etl_pipeline", source_path: Optional[str] = None, schedule_cron: str = "0 * * * *"):
+    src = source_path or "<provided at runtime>"
     dag_code = f"""from datetime import timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 
 def extract():
-    print("Извлекаем данные")
+    print("Извлекаем данные из: {src}")
 
 def transform():
     print("Трансформируем данные")
@@ -116,7 +138,7 @@ with DAG(
     dag_id='{dag_id}',
     default_args=default_args,
     description='ETL pipeline to {target_db}',
-    schedule_interval='0 * * * *',
+    schedule_interval='{schedule_cron}',
     start_date=days_ago(1),
     tags=['etl'],
 ) as dag:
@@ -139,7 +161,8 @@ with DAG(
 
 def generate_hypothesis(recommendations):
     prompt = _read_prompt(os.path.join("prompts", "generate_hypothesis.txt"), recommendations=json.dumps(recommendations, ensure_ascii=False))
-    llm = _llm_generate_json(prompt) if prompt else {}
+    system_text = "Ты пишешь краткие бизнес-гипотезы на русском. Верни ТОЛЬКО JSON: {\"hypothesis\": string}."
+    llm = _llm_chat_json(system_text, prompt) if prompt else {}
     if llm and isinstance(llm.get("hypothesis"), str):
         return llm["hypothesis"]
     # fallback
@@ -150,32 +173,131 @@ def generate_hypothesis(recommendations):
 
 
 def generate_ddl(sample_data):
-    prompt = _read_prompt(os.path.join("prompts", "generate_ddl.txt"), data=json.dumps(sample_data, ensure_ascii=False))
-    llm = _llm_generate_json(prompt) if prompt else {}
+    prompt = _read_prompt(os.path.join("prompts", "ddl.txt"), data=json.dumps(sample_data, ensure_ascii=False))
+    system_text = "Ты генерируешь DDL для PostgreSQL и ClickHouse. Верни JSON: {\"ddl\": string}."
+    llm = _llm_chat_json(system_text, prompt) if prompt else {}
     if llm and isinstance(llm.get("ddl"), str):
         return llm["ddl"]
+    # Fallback: типизация по образцу
     if not sample_data:
         return ""
-    columns = sample_data[0].keys()
-    # PostgreSQL
-    ddl_pg = "CREATE TABLE IF NOT EXISTS dataset (\n"
-    for col in columns:
-        ddl_pg += f"    {col} TEXT,\n"
-    ddl_pg = ddl_pg.rstrip(",\n") + "\n);\n"
-    ddl_pg += "-- Рекомендуется создать индексы по ключевым полям\n"
-    # ClickHouse
-    ddl_ch_cols = ",\n".join([f"    `{c}` String" for c in columns])
+    row = sample_data[0]
+    def infer_pg_type(val):
+        if isinstance(val, bool):
+            return "BOOLEAN"
+        if isinstance(val, int):
+            return "BIGINT"
+        if isinstance(val, float):
+            return "DOUBLE PRECISION"
+        if isinstance(val, str):
+            v = val.strip()
+            # простая эвристика даты/времени
+            if any(s in v for s in ["-", ":", "T"]) and len(v) >= 8:
+                return "TIMESTAMP"
+            return "TEXT"
+        return "TEXT"
+    def infer_ch_type(val):
+        if isinstance(val, bool):
+            return "UInt8"
+        if isinstance(val, int):
+            return "Int64"
+        if isinstance(val, float):
+            return "Float64"
+        if isinstance(val, str):
+            v = val.strip()
+            if any(s in v for s in ["-", ":", "T"]) and len(v) >= 8:
+                return "DateTime"
+            return "String"
+        return "String"
+    columns = list(row.keys())
+    # PG DDL
+    ddl_pg_cols = []
+    for c in columns:
+        sample_val = row[c]
+        ddl_pg_cols.append(f"    \"{c}\" {infer_pg_type(sample_val)}")
+    ddl_pg = "CREATE TABLE IF NOT EXISTS dataset (\n" + ",\n".join(ddl_pg_cols) + "\n);\n"
+    ddl_pg += "-- Рекомендуются индексы по полям фильтрации/джойнов\n"
+    # CH DDL
+    ddl_ch_cols = []
+    has_ts = None
+    for c in columns:
+        sample_val = row[c]
+        t = infer_ch_type(sample_val)
+        ddl_ch_cols.append(f"    `{c}` {t}")
+        if t == "DateTime" and has_ts is None:
+            has_ts = c
+    partition = f"PARTITION BY toDate({has_ts})\n" if has_ts else ""
+    order_by = f"ORDER BY ({has_ts})" if has_ts else "ORDER BY tuple()"
     ddl_ch = (
         "CREATE TABLE IF NOT EXISTS dataset_ch (\n" +
-        ddl_ch_cols +
-        "\n) ENGINE = MergeTree\nPARTITION BY toYYYYMMDD(parseDateTimeBestEffort(date))\nORDER BY tuple();\n"
+        ",\n".join(ddl_ch_cols) +
+        f"\n) ENGINE = MergeTree\n{partition}{order_by};\n"
     )
     return ddl_pg + "\n" + ddl_ch
 
 
-def load_to_target_db(etl_code, target_db):
-    print(f"Загрузка данных в {target_db} выполнена.")
-    return "success"
+def load_to_target_db(source_path: str, target_db: str):
+    """Простая загрузка данных из локального файла в выбранную СУБД."""
+    if not source_path or not os.path.exists(source_path):
+        return "source_not_found"
+    # Чтение файла
+    ext = os.path.splitext(source_path)[1].lower()
+    try:
+        if ext == ".csv":
+            df = pd.read_csv(source_path)
+        elif ext == ".json":
+            df = pd.read_json(source_path)
+        elif ext == ".xml":
+            try:
+                df = pd.read_xml(source_path)
+            except Exception:
+                # Фолбек: попробовать через xmltodict
+                try:
+                    import xmltodict  # type: ignore
+                    with open(source_path, 'r', encoding='utf-8') as f:
+                        data = xmltodict.parse(f.read())
+                    # попытка найти список записей
+                    if isinstance(data, dict):
+                        # возьмём первый список словарей
+                        records = None
+                        for v in data.values():
+                            if isinstance(v, list) and v and isinstance(v[0], dict):
+                                records = v
+                                break
+                            if isinstance(v, dict):
+                                for vv in v.values():
+                                    if isinstance(vv, list) and vv and isinstance(vv[0], dict):
+                                        records = vv
+                                        break
+                        if records is None:
+                            return "xml_parse_failed"
+                        df = pd.DataFrame(records)
+                    else:
+                        return "xml_parse_failed"
+                except Exception:
+                    return "xml_parse_failed"
+        else:
+            return "unsupported_format"
+    except Exception:
+        return "read_failed"
+
+    table = os.path.splitext(os.path.basename(source_path))[0]
+    table = _sanitize_table_name(table)
+    if target_db == "postgres":
+        conn = os.environ.get("PG_CONN_STR", "postgresql://data_engineer:password@postgres:5432/data_engineer_db")
+        try:
+            upload_to_postgres(df, table_name=table, conn_str=conn)
+            return "success"
+        except Exception:
+            return "pg_upload_failed"
+    elif target_db == "clickhouse":
+        try:
+            upload_to_clickhouse(df, table_name=table)
+            return "success"
+        except Exception:
+            return "ch_upload_failed"
+    else:
+        return "unsupported_target"
 
 
 def upload_file_to_hdfs(local_path: str, hdfs_path: str) -> bool:
@@ -205,10 +327,26 @@ def upload_to_clickhouse(df, table_name: str, host: Optional[str] = None, port: 
     database = database or os.environ.get("CLICKHOUSE_DB", "default")
     client = get_client(host=host, port=port, database=database)
     cols = ", ".join([f"`{c}` String" for c in df.columns])
-    client.command(f"CREATE TABLE IF NOT EXISTS {table_name} ({cols}) ENGINE = MergeTree ORDER BY tuple()")
-    client.insert(table_name, df.values.tolist(), column_names=list(df.columns))
-
+    safe_table = _sanitize_table_name(table_name)
+    client.command(f"CREATE TABLE IF NOT EXISTS `{safe_table}` ({cols}) ENGINE = MergeTree ORDER BY tuple()")
+    client.insert(safe_table, df.values.tolist(), column_names=list(df.columns))
+    
 def upload_to_hdfs(local_path: str, hdfs_path: str) -> bool:
     return upload_file_to_hdfs(local_path, hdfs_path)
 
 
+def _sanitize_table_name(name: str) -> str:
+    """Приводит имя таблицы к безопасному формату: латиница/цифры/подчёркивание, в нижнем регистре.
+    Не начинается с цифры (в этом случае добавляется префикс t_)."""
+    # заменить всё, кроме букв/цифр, на подчёркивание
+    s = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    # сжать повторяющиеся подчёркивания
+    s = re.sub(r"_+", "_", s)
+    # обрезать подчёркивания по краям
+    s = s.strip("_")
+    # в нижний регистр
+    s = s.lower() or "table"
+    # не начинать с цифры
+    if s[0].isdigit():
+        s = f"t_{s}"
+    return s

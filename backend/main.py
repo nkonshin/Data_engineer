@@ -92,7 +92,13 @@ async def upload_file(file: UploadFile = File(...)):
     db.refresh(pipeline)
     # Сохраняем DAG с уникальным id и обновляем запись
     dag_id = f"etl_pipeline_{pipeline.id}"
-    dag_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"), dag_id=dag_id)
+    dag_code = generate_etl_pipeline(
+        sample_data,
+        target_db=recs.get("target_db", "postgres"),
+        dag_id=dag_id,
+        source_path=file_path,
+        schedule_cron='0 * * * *',
+    )
     dags_dir = os.path.join(os.path.dirname(__file__), 'airflow_dags')
     os.makedirs(dags_dir, exist_ok=True)
     dag_path = os.path.join(dags_dir, f"{dag_id}.py")
@@ -113,6 +119,7 @@ async def connect_db(
     host: str = Form(...),
     port: int = Form(...),
     dbname: str = Form(...),
+    table: str = Form('data'),
     user: str = Form(None),
     password: str = Form(None)
 ):
@@ -123,14 +130,15 @@ async def connect_db(
     if source_db == "postgres":
         conn_str = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
         try:
-            df = pd.read_sql("SELECT * FROM data LIMIT 10;", conn_str)
+            query = f'SELECT * FROM "{table}" LIMIT 10;'
+            df = pd.read_sql(query, conn_str)
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": f"Ошибка подключения к Postgres: {e}"})
     elif source_db == "clickhouse":
         try:
             from clickhouse_connect import get_client
-            client = get_client(host=host, port=port)
-            df = client.query_df(f"SELECT * FROM {dbname} LIMIT 10")
+            client = get_client(host=host, port=port, database=dbname)
+            df = client.query_df(f"SELECT * FROM {table} LIMIT 10")
         except Exception as e:
             return JSONResponse(status_code=400, content={"error": f"Ошибка подключения к ClickHouse: {e}"})
     else:
@@ -161,7 +169,14 @@ async def connect_db(
     db.refresh(pipeline)
     # Сохранение DAG
     dag_id = f"etl_pipeline_{pipeline.id}"
-    dag_code = generate_etl_pipeline(sample_data, target_db=recs.get("target_db", "postgres"), dag_id=dag_id)
+    source_hint = f"{source_db}://{host}:{port}/{dbname}.{table}"
+    dag_code = generate_etl_pipeline(
+        sample_data,
+        target_db=recs.get("target_db", "postgres"),
+        dag_id=dag_id,
+        source_path=source_hint,
+        schedule_cron='0 * * * *',
+    )
     dags_dir = os.path.join(os.path.dirname(__file__), 'airflow_dags')
     os.makedirs(dags_dir, exist_ok=True)
     dag_path = os.path.join(dags_dir, f"{dag_id}.py")
@@ -236,7 +251,7 @@ async def load_to_db(body: PipelineId):
         db.close()
         return JSONResponse(status_code=404, content={"error": "Пайплайн не найден"})
     db.close()
-    result = load_to_target_db(pipeline.etl_code, pipeline.target_db)
+    result = load_to_target_db(pipeline.source_path, pipeline.target_db)
     return {"status": result}
 
 
