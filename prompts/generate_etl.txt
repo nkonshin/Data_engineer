@@ -1,0 +1,4 @@
+Сгенерируй код DAG Airflow (Python) с задачами extract -> transform -> load.
+Расписание: ежечасно (cron: 0 * * * *).
+Используй PythonOperator, без внешних подключений.
+Верни JSON вида {"etl": "...код..."}.
